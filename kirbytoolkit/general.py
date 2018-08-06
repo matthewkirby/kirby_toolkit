@@ -8,22 +8,44 @@ from colossus.halo.concentration import concentration
 from scipy.special import erfc
 
 
-# =============================================================================================================
-# Make a lookup table for M500c given M200m
-# Updated 2/2/2018
-# =============================================================================================================
-def mass_conversion(lnmlist, sinfo, cfgin):
-    # Set up colossus cosmology
-    params = {'flat': True, 'H0': sinfo.H0, 'Om0': sinfo.OmM, 'Ob0': sinfo.Omb, 'sigma8': sinfo.sigma8, 'ns': sinfo.ns}
-    cosmo = setCosmology('myCosmo', params)
+def mass_conversion(m200m, redshift, cosmology, mass_is_log=True):
+    """Convert m200m to m500c
 
-    # Prep other stuff
-    m200m_list = [np.exp(lnm) for lnm in lnmlist]
-    z_hmf = cfgin['SurveyInfo'].getfloat('zhmf')
+    Parameters
+    ----------
+    m200m : array_like
+        Halo mass(es) calculated in a radius such that the mean density is 200 times
+        the mean density of the universe.
+    redshift : float
+        Redshift of the halos used to calculate the concentration and perform
+        the mass conversion
+    cosmology : dict
+        Cosmology parameters being used
+    mass_is_log : bool
+        Flag to tell the script if it should intake and output ln(M) or M
 
-    lnm500c_list = [np.log(changeMassDefinition(m200m, concentration(m200m, '200m', z_hmf), z_hmf, '200m', '500c')[0]) for m200m in m200m_list]
+    Returns
+    -------
+    output : array_like
+        Halo mass(es) calculated in a radius such that the mean density is 500 times
+        the critical density of the universe.
 
-    return lnm500c_list
+    Notes
+    -----
+    We assume that every halo is at the same redshift.
+    """
+    setCosmology('myCosmo', cosmology)
+
+    if mass_is_log:
+        m200m = np.exp(m200m)
+
+    m500c = changeMassDefinition(m200m, concentration(m200m, '200m', redshift),
+                                 redshift, '200m', '500c')[0]
+
+    if mass_is_log:
+        m500c = np.log(m500c)
+
+    return m500c
 
 
 # =============================================================================================================
