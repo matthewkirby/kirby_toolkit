@@ -48,49 +48,66 @@ def mass_conversion(m200m, redshift, cosmology, mass_is_log=True):
     return m500c
 
 
-# =============================================================================================================
-# Load Matteo's lookuptable for Var(lamobs|lamtrue)
-# Updated 3/1/2018
-# =============================================================================================================
-def load_richness_errorbar_lookuptable(addpath=''):
-    lamlist, varlist = np.loadtxt('%sinputs/p_lam_obs_z0.2.txt' % addpath, unpack=True, skiprows=1)
+def load_simple_projection_model(addpath=''):
+    """Read in the simple projection model
+
+    The model is Gaussian and this function reads in the variance in the observed
+    richness given the true richness.
+
+    Parameters
+    ----------
+    addpath : str
+        The function looks in a specific directory for the file. This parameter
+        prepends path onto the default location.
+
+    Returns
+    -------
+    lamlist : array_like
+        A grid in true richness
+    varlist : array_like
+        The variance in observed richness given true richness on the grid given
+        by lamlist
+    """
+    lamlist, varlist = np.loadtxt('{}inputs/p_lam_obs_z0.2.txt'.format(addpath),
+                                  unpack=True, skiprows=1)
     return lamlist, varlist
 
 
-# =============================================================================================================
-# Load the full projections model
-# Updated 5/30/2018
-# =============================================================================================================
-def load_original_projection_model(cfgin, addpath=''):
-    lam_true = np.array([1., 3., 5., 7., 9., 12., 15.55555534, 20., 24., 26.11111069, 30.,
-                         36.66666412, 40., 47.22222137, 57.77777863, 68.33332825, 78.8888855,
-                         89.44444275, 100., 120., 140., 160.])
-    z_bins = np.linspace(0.10, 0.30, 5)
+def load_full_projection_model(addpath=''):
+    """Read in the full projection model
 
-    # Find index to for zhmf
-    idx = (z_bins == cfgin['SurveyInfo'].getfloat('zhmf'))
+    Parameters
+    ----------
+    addpath : str
+        The function looks in a specific directory for the file. This parameter
+        prepends path onto the default location.
 
-    # Load each of the lookup tables and find for appropriate z
-    fit_lssmock = np.loadtxt('{}projection_model/prj_params_v9_41_lssmock.txt'.format(addpath))
-    tau_prjmock_fit = np.reshape(fit_lssmock[0,:], (len(z_bins), len(lam_true)))[idx][0]
-    mu_prjmock_fit = np.reshape(fit_lssmock[1,:], (len(z_bins), len(lam_true)))[idx][0]
-    sig_prjmock_fit = np.reshape(fit_lssmock[2,:], (len(z_bins), len(lam_true)))[idx][0]
-    fmask_prjmock_fit = np.reshape(fit_lssmock[3,:], (len(z_bins), len(lam_true)))[idx][0]
-    fprj_prjmock_fit = np.reshape(fit_lssmock[4,:], (len(z_bins), len(lam_true)))[idx][0]
-
-    projection_model = {'tau': tau_prjmock_fit, 'mu': mu_prjmock_fit, 'sigma': sig_prjmock_fit,
-                        'fmsk': fmask_prjmock_fit, 'fprj': fprj_prjmock_fit, 'lam': lam_true}
-    return projection_model
+    Returns
+    -------
+    projection_model : dict
+        Dictionary containing lists to the 5 projection model parameters and true richness
+        on a grid
+    """
+    input_model = np.loadtxt('{}projection_model/extended_projection_model.dat'.format(addpath))
+    lam, fprj, fmsk, mu, sigma, tau = input_model
+    return {'tau': tau, 'mu': mu, 'sigma': sigma, 'fprj': fprj, 'fmsk': fmsk, 'lam': lam}
 
 
-def load_projection_model(cfgin, addpath=''):
-    lam, fprj, fmsk, mu, sigma, tau = np.loadtxt('{}projection_model/extended_projection_model.dat'.format(addpath), unpack=True)
-    projection_model = {'tau': tau, 'mu': mu, 'sigma': sigma, 'fprj': fprj, 'fmsk': fmsk, 'lam': lam}
-    return projection_model
+def load_projection_model_interpolations(addpath=''):
+    """Interpolate the full projection model
 
+    Parameters
+    ----------
+    addpath : str
+        The function looks in a specific directory for the file. This parameter
+        prepends path onto the default location.
 
-def load_projection_model_interpolations(cfgin, addpath=''):
-    lss_model = load_projection_model(cfgin, addpath)
+    Returns
+    -------
+    projection_model : dict
+        Dictionary containing cubic splines for each of the 5 projection model parameters
+    """
+    lss_model = load_full_projection_model(addpath)
 
     fprj = interp1d(lss_model['lam'], lss_model['fprj'], kind='cubic')
     fmsk = interp1d(lss_model['lam'], lss_model['fmsk'], kind='cubic')
@@ -102,88 +119,121 @@ def load_projection_model_interpolations(cfgin, addpath=''):
     return projection_model
 
 
-def calc_plamobslamtrue_on_grid(cfgin, addpath=''):
-    lamobs_grid = np.linspace(2., 502., 101)
-    lamtrue_grid = np.linspace(1, 501., 101)
-    model = load_projection_model_interpolations(cfgin, addpath=addpath)
+def evaluate_full_projection_params(model, true_richness):
+    """Given a true richness, determine the values of the projection model parameters
 
-    table = []
-    for lamtrue in lamtrue_grid:
-        pmodel = calc_proj_model(model, lamtrue)
-        for lamobs in lamobs_grid:
-            table.append(p_lamobs_lamtrue(lamobs, pmodel))
+    Parameters
+    ----------
+    model : dict
+        Dictionary of cubic splines for each of the projection model parameters
+    true_richness : float
+        The true richess that you wish to evaluate the projection model at
 
-    return lamobs_grid, table
+    Returns
+    -------
+    output : dict
+        Dictionary of the model parameters evaluated at the requested true richness.
+    """
+    fprj = model['fprj'](true_richness)
+    fmsk = model['fmsk'](true_richness)
+    tau = model['tau'](true_richness)
+    sigma = model['sigma'](true_richness)
+    mu = model['mu'](true_richness)
+
+    return {'fprj': fprj, 'fmsk': fmsk, 'mu': mu, 'sigma': sigma,
+            'tau': tau, 'lamtrue': true_richness}
 
 
-def calc_proj_model(model, lamtrue):
-    fprj = model['fprj'](lamtrue)
-    fmsk = model['fmsk'](lamtrue)
-    tau = model['tau'](lamtrue)
-    sigma = model['sigma'](lamtrue)
-    mu = model['mu'](lamtrue)
+def evaluate_full_projection_model(lamobs, model):
+    """Calculate P(observed_richness|true_richness)
 
-    projection_model = {'fprj': fprj, 'fmsk': fmsk, 'mu': mu, 'sigma': sigma,
-                        'tau': tau, 'lamtrue': lamtrue}
-    return projection_model
+    Parameters
+    ----------
+    lamobs : float
+        Observed richness
+    model : dict
+        Model parameters and true richness at the true richness
 
-
-def p_lamobs_lamtrue(lamobs, model):
+    Returns
+    -------
+    output : float
+        P(observed_richness|true_richness)
+    """
     # Model params
     fprj, fmsk, lamtrue = model['fprj'], model['fmsk'], model['lamtrue']
     mu, sigma, tau = model['mu'], model['sigma'], model['tau']
 
     # Some stuff to make the calculation easier
     sig2 = sigma*sigma
-    A = np.exp(0.5*tau*(2.*mu + tau*sig2 - 2.*lamobs))
+    aa = np.exp(0.5*tau*(2.*mu + tau*sig2 - 2.*lamobs))
     root2siginv = 1./(np.sqrt(2.)*sigma)
 
     # The 4 terms in the model
     t1 = (1.-fmsk)*(1.-fprj)*np.exp(-(lamobs - mu)*(lamobs - mu)/(2*sig2))/np.sqrt(2.*np.pi*sig2)
-    t2 = 0.5*((1.-fmsk)*fprj*tau + fmsk*fprj/lamtrue)*A*erfc((mu + tau*sig2 - lamobs)*root2siginv)
+    t2 = 0.5*((1.-fmsk)*fprj*tau + fmsk*fprj/lamtrue)*aa*erfc((mu + tau*sig2 - lamobs)*root2siginv)
     t3 = (fmsk*0.5/lamtrue)*(erfc((mu - lamobs - lamtrue)*root2siginv) 
                              - erfc((mu - lamobs)*root2siginv))
-    t4 = (fmsk*fprj*0.5/lamtrue)*np.exp(-1.*tau*lamtrue)*A*erfc((mu + tau*sig2 - lamtrue 
+    t4 = (fmsk*fprj*0.5/lamtrue)*np.exp(-1.*tau*lamtrue)*aa*erfc((mu + tau*sig2 - lamtrue
                                                                  - lamobs)*root2siginv)
     return t1+t2+t3-t4
 
 
-# =============================================================================================================
-# Build a class to hold all of the constants for the survey and cosmology info
-# Updated 1/15/2018
-# =============================================================================================================
 class SurveyInfo(object):
-    def __init__(self, cfg_in):
-        self.area = cfg_in['SurveyInfo'].getfloat('area')
-        self.zMin = cfg_in['SurveyInfo'].getfloat('zlo')
-        self.zMax = cfg_in['SurveyInfo'].getfloat('zhi')
-        self.OmM = cfg_in['Cosmology'].getfloat('omm')
-        self.OmLam = cfg_in['Cosmology'].getfloat('oml')
-        self.H0 = cfg_in['Cosmology'].getfloat('h0')
+    """Hold all of the survey details
 
-        self.Omb = cfg_in['Cosmology'].getfloat('omb')
-        self.sigma8 = cfg_in['Cosmology'].getfloat('sigma8')
-        self.ns = cfg_in['Cosmology'].getfloat('ns')
-
+    Attributes
+    ----------
+    area : float
+        Survey area in sq deg
+    zmin : float
+        Minimum survey redshift
+    zmax : float
+        Maximum survey redshift
+    cosmo : dict
+        Cosmological model
+    c : float
+        The speed of light
+    survey_volume : float
+        3d volume of survey in Mpc^3
+    solid_angle : float
+        Survey area in steradians
+    """
+    def __init__(self, cfgin, cosmology):
+        self.area = cfgin['SurveyInfo'].getfloat('area')
+        self.zmin = cfgin['SurveyInfo'].getfloat('zlo')
+        self.zmax = cfgin['SurveyInfo'].getfloat('zhi')
+        self.cosmo = cosmology
         self.c = 300000.
+        self._calc_comoving_volume()
 
-        self.calc_comoving_volume()
-
-    def calc_comoving_volume(self):
-        Vs, solid_angle = calcComovingVolumeMpc3(self)
-        self.Vs = Vs
+    def _calc_comoving_volume(self):
+        survey_volume, solid_angle = calcComovingVolumeMpc3(self)
+        self.survey_volume = survey_volume
         self.solid_angle = solid_angle
 
     def reset_survey_area(self, area):
         self.area = area
-        self.calc_comoving_volume()
+        self._calc_comoving_volume()
 
 
-# =============================================================================================================
-# Class to hold the cluster information
-# Updated: 1/15/2018
-# =============================================================================================================
 class Cluster(object):
+    """Hold all of the details for a single galaxy cluster
+
+    Attributes
+    ----------
+    lam : float
+        Richness
+    lamE : float
+        Uncertainty in richness
+    mgas : float
+        Gas mass
+    mgasE : float
+        Uncertainty in gas mass
+    lnm200m : float
+        ln(M200m)
+    lnm500c : float
+        ln(M500c)
+    """
     def __init__(self, richness, richnessError, mgas, mgasError, rescales):
         self.lam = richness/rescales['rich']
         self.lamE = richnessError/rescales['rich']
@@ -277,7 +327,7 @@ def volumeIntegrand(z, survey):
 
 def calcComovingVolumeMpc3(survey):
     solid_angle = survey.area*np.pi**2/(180.**2)
-    Vs = solid_angle*quad(volumeIntegrand, survey.zMin, survey.zMax, args=(survey), epsabs=1.49e-10, epsrel=1.49e-10)[0]
+    Vs = solid_angle*quad(volumeIntegrand, survey.zmin, survey.zmax, args=(survey), epsabs=1.49e-10, epsrel=1.49e-10)[0]
     return Vs, solid_angle
 
 
