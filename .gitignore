@@ -3,3 +3,4 @@ kirby_toolkit.egg-info/
 build/
 dist/
 __pycache__
+.cache/
