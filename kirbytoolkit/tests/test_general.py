@@ -1,4 +1,5 @@
 import numpy as np
+from configparser import ConfigParser
 import kirbytoolkit as ktk
 
 
@@ -23,3 +24,17 @@ def test_mass_conversion():
     # Test for an array of lnmasses
     actual = ktk.mass_conversion(np.log(sample_m200m), 0.2, cosmology, mass_is_log=True)
     np.testing.assert_allclose(actual, desired_lnm500c, rtol=1e-6)
+
+
+def test_comoving_volume():
+    """Test the comoving volume calculation in SurveyInfo"""
+    cfgin = ConfigParser()
+    cfgin.add_section('SurveyInfo')
+    cfgin.set('SurveyInfo', 'area', '10000')
+    cfgin.set('SurveyInfo', 'zlo', '0.1')
+    cfgin.set('SurveyInfo', 'zhi', '0.3')
+
+    cosmology = {'flat': True, 'H0': 100, 'Om0': 0.301, 'Ob0': 0.048, 'sigma8': 0.798, 'ns': 0.973}
+
+    sinfo = ktk.SurveyInfo(cfgin, cosmology)
+    np.testing.assert_allclose(sinfo.survey_volume, np.float64(567534172.), rtol=1e-6)

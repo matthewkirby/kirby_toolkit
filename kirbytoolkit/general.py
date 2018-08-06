@@ -1,11 +1,12 @@
 import numpy as np
-from scipy.integrate import quad
+import os
 from scipy.interpolate import interp1d
 import configparser as cp
 from colossus.halo.mass_defs import changeMassDefinition
 from colossus.cosmology.cosmology import setCosmology
 from colossus.halo.concentration import concentration
 from scipy.special import erfc
+from astropy.cosmology import FlatLambdaCDM
 
 
 def mass_conversion(m200m, redshift, cosmology, mass_is_log=True):
@@ -204,15 +205,18 @@ class SurveyInfo(object):
         self.zmax = cfgin['SurveyInfo'].getfloat('zhi')
         self.cosmo = cosmology
         self.c = 300000.
+        self.solid_angle = self.area*np.pi**2/(180.**2)
         self._calc_comoving_volume()
 
     def _calc_comoving_volume(self):
-        survey_volume, solid_angle = calcComovingVolumeMpc3(self)
+        cosmo = FlatLambdaCDM(H0=self.cosmo['H0'], Om0=self.cosmo['Om0'])
+        fullsky_volume = cosmo.comoving_volume(self.zmax)-cosmo.comoving_volume(self.zmin)
+        survey_volume = fullsky_volume.value*(self.solid_angle/(4.*np.pi))
         self.survey_volume = survey_volume
-        self.solid_angle = solid_angle
 
     def reset_survey_area(self, area):
         self.area = area
+        self.solid_angle = self.area*np.pi**2/(180.**2)
         self._calc_comoving_volume()
 
 
@@ -234,11 +238,11 @@ class Cluster(object):
     lnm500c : float
         ln(M500c)
     """
-    def __init__(self, richness, richnessError, mgas, mgasError, rescales):
+    def __init__(self, richness, richness_error, mgas, mgas_error, rescales):
         self.lam = richness/rescales['rich']
-        self.lamE = richnessError/rescales['rich']
+        self.lamE = richness_error/rescales['rich']
         self.mgas = mgas/rescales['mgas']
-        self.mgasE = mgasError/rescales['mgas']
+        self.mgasE = mgas_error/rescales['mgas']
 
     def include_mass(self, lnm200m, lnm500c):
         self.lnm200m = lnm200m
@@ -257,34 +261,52 @@ class Cluster(object):
         return [1.0, self.lam, self.lamE, self.mgas, self.mgasE, self.lnm200m, self.lnm500c]
 
 
-# =============================================================================================================
-# Realization Class
-# Holds all of the information of a sample of clusters
-# Can make a list of these objects if multiple realizations are involved
-# List with one element for real life
-# Updated: 1/15/2018
-# =============================================================================================================
 class Realization:
+    """Hold a single survey realization.
+
+    The intended use here is to allow the analysis to be run on several survey
+    realizations at once.
+
+    Attributes
+    ----------
+    cllist : array_like
+        List of Cluster objects
+    lam_n : float
+        The richness of the N richest object for our selection function
+        analysis
+    lam_n_obs : float
+        Observational uncertainty in lam_n
+    """
     def __init__(self, cllist, lam_n, lam_n_obs):
         self.lam_n = lam_n
         self.lam_n_obs = lam_n_obs
         self.cllist = cllist
 
 
-# =============================================================================================================
-# Take in the HMF Block from Matteo, apply mass cuts and 
-# format so that hmf[i] gives the hmf at the i-th redshift
-# Updated 1/15/2018
-# =============================================================================================================
-def read_hmf_files(addpath, cfg_in, generation=0, gencut=-1.):
-    log10M_cut = cfg_in['General'].getfloat('log10Mcut')
-    zHMF = cfg_in['SurveyInfo'].getfloat('zhmf')
-    cosmology = cfg_in['Cosmology']['cosmology']
+def read_hmf_files(addpath, cfgin, gencut=-1.):
+    """Load the halo mass function
+
+    My halo mass function comes from a cosmosis modules and is precalculated.
+    This could probably be rewritten to calculate it on the fly using pyccl or
+    some other tool.
+
+    Parameters
+    ----------
+    addpath : str
+        If not storing this in the default location, prepend onto the path
+    cfgin : ConfigParser
+        Config details for the run
+    gencut : float, optional
+        Use a different mass cut if I am generating a mock
+    """
+    log10m_cut = cfgin['General'].getfloat('log10Mcut')
+    zhmf = cfgin['SurveyInfo'].getfloat('zhmf')
+    cosmology = cfgin['Cosmology']['cosmology']
     path = "{}inputs/generateHMF/hmf_{}_cosmology/mass_function/".format(addpath, cosmology)
 
     # Find the index of the HMF we want to work with
     zlist = np.loadtxt(path+'z.txt', skiprows=1)
-    zind = np.where(abs(zlist-zHMF) < 0.00003)[0][0]
+    zind = np.where(np.abs(zlist-zhmf) < 0.00003)[0][0]
     print("Loading HMF at redshift %f" % zlist[zind])
 
     # Extract the appropriate HMF
@@ -294,51 +316,42 @@ def read_hmf_files(addpath, cfg_in, generation=0, gencut=-1.):
 
     # Load masses and make mass cut
     mlist = np.loadtxt(path+'mass.txt', skiprows=1)
-    if generation: 
-        if gencut < 0.:
-            raise ValueError("ERROR: Need to specify generation mass cut")
+    if gencut > 0:
         mass_cut = np.where((mlist >= 10.**gencut) & (mlist <= 10.**16))
     else:
-        mass_cut = np.where((mlist >= 10.**log10M_cut) & (mlist <= 10.**16))
+        mass_cut = np.where((mlist >= 10.**log10m_cut) & (mlist <= 10.**16))
 
     # Recast into dn/(dz dlnm)
     lnmlist = np.asarray([np.log(m) for m in mlist])
     dndlnmdz = np.asarray([m*dndmdz for m, dndmdz in zip(mlist, hmf)])
 
     return lnmlist[mass_cut], dndlnmdz[mass_cut]
-    
 
 
-# =============================================================================================================
-# Functions relating to volume calculation
-# Updated 1/15/2018
-# =============================================================================================================
-def comovIntegrand(z, survey):
-    OmM, OmL, H0 = survey.OmM, survey.OmLam, survey.H0
-    OmK = 1.0-OmL-OmM
-    c = survey.c
-    return c/(H0*np.sqrt(OmM*pow(1.+z, 3) + OmK*pow(1.+z, 2) + OmL))
+def load_clusters(cfgin, note, rescales, altpath=''):
+    """Load the list of clusters being used for analysis
 
-def comov(z, survey):
-    return quad(comovIntegrand, 0.0, z, args=(survey), epsabs=1.49e-10, epsrel=1.49e-10)[0]
+    Parameters
+    ----------
+    cfgin : ConfigParser
+        Configuration details for the run
+    note : int
+        Additional details for the input file names. Used to tell realizations apart
+    rescales : array_like
+        Quantities to rescale the cluster measurements to ~unity
+    altpath : str
+        If clusters are stored somewhere besides the default path
 
-def volumeIntegrand(z, survey):
-    return (comov(z, survey))**2*comovIntegrand(z, survey)
-
-def calcComovingVolumeMpc3(survey):
-    solid_angle = survey.area*np.pi**2/(180.**2)
-    Vs = solid_angle*quad(volumeIntegrand, survey.zmin, survey.zmax, args=(survey), epsabs=1.49e-10, epsrel=1.49e-10)[0]
-    return Vs, solid_angle
-
-
-# =============================================================================================================
-# Functions to read in the clusters based on if I am using a mock or real data
-# Updated 1/15/2018
-# =============================================================================================================
-def load_clusters(cfg_in, note, rescales, altpath=''):
-    simtype = cfg_in['General']['simtype']
-    catalog = cfg_in['General']['synth_catalog']
-    Nclusters = cfg_in['SurveyInfo'].getint('Nclusters')
+    Returns
+    -------
+    real_list : array_like
+        Realization objects loaded in
+    lnpivot : float
+        The median cluster mass (or estimate of such) to use as a default mass pivot
+    """
+    simtype = cfgin['General']['simtype']
+    catalog = cfgin['General']['synth_catalog']
+    n_clusters = cfgin['SurveyInfo'].getint('Nclusters')
 
     if simtype == 'synth10':
         real_list = load_synth10(catalog, note, rescales)
@@ -346,61 +359,75 @@ def load_clusters(cfg_in, note, rescales, altpath=''):
 
     # Build the filename based on the type of simulation
     if simtype == 'real':
-        #cluster_fname = 'inputs/richestClustersInRedmapper_MantzXray.dat'
         cluster_fname = 'inputs/richestClustersInRedmapper_MantzXray_MatteoErrors.dat'
     elif len(altpath) > 5:
         cluster_fname = altpath
     elif simtype == 'synth':
-        cluster_fname = './catalogs/mock/%s/richest%i_%i.dat' % (catalog, Nclusters, note)
+        cluster_fname = './catalogs/mock/{}/richest{}_{}.dat'.format(catalog, n_clusters, note)
         
     # Actually load the clusters
-    cllist, lnpivot, lamN, lamN_obs = load_clusters_from_file(cluster_fname, rescales)
-    real_list = [Realization(cllist, lamN, lamN_obs)]
+    cllist, lnpivot, lam_n, lam_n_obs = load_clusters_from_file(cluster_fname, rescales)
+    real_list = [Realization(cllist, lam_n, lam_n_obs)]
 
     return real_list, lnpivot
 
 
-# 1/15/2018
 def load_clusters_from_file(fname, rescales):
+    """Load the clusters from a file into Cluster objects
+
+    Parameters
+    ----------
+    fname : str
+        Path to the cluster catalog
+    rescales : array_like
+        Quantities to rescale the cluster measurements to ~unity
+
+    Returns
+    -------
+    cllist : array_like
+        Like of Cluster objects
+    lnpivot : float
+        Default pivot, the median cluster mass
+    lam_n : float
+        Richness of the least rich cluster
+    lam_n_obs : float
+        Uncertainty in lam_n
+    """
     # Load the clusters
-    lamlist, lamElist, mglist, mgElist = np.loadtxt(fname, skiprows=1, usecols=[1,2,3,4], unpack=True)
-    cllist = [Cluster(lamlist[i], lamElist[i], mglist[i], mgElist[i], rescales) for i in range(len(lamlist))]
+    inputs = np.loadtxt(fname, skiprows=1, usecols=[1, 2, 3, 4])
+    lamobs, lamobs_uncert, mgas, mgas_uncert = inputs
+    cllist = [Cluster(lamobs[i], lamobs_uncert[i], mgas[i], mgas_uncert[i], rescales)
+              for i in range(len(lamobs))]
 
     # Find the median pivot
-    lnpivot = np.log(np.median(mglist)/(0.3))
+    lnpivot = np.log(np.median(mgas)/0.3)
 
     # Find the least rich cluster
-    lamN, idx = min((lamN, idx) for (idx, lamN) in enumerate(lamlist))
-    lamN_obs = lamElist[idx]
+    lam_n, idx = min((lamN, idx) for (idx, lamN) in enumerate(lamobs))
+    lam_n_obs = lamobs_uncert[idx]
 
     print('%i Clusters loaded.' % (len(cllist)))
-    return cllist, lnpivot, lamN, lamN_obs
+    return cllist, lnpivot, lam_n, lam_n_obs
 
 
-# 1/15/2018
 def load_synth10(catalog, note, rescales):
+    """Load 10 realizations"""
     real_list = []
     for kk in range(10):
-        cluster_fname = './catalogs/mock/%s/richest30_%i.dat' % (catalog, note*10+k)
+        cluster_fname = './catalogs/mock/%s/richest30_%i.dat' % (catalog, note*10+kk)
         print("Read cluster", cluster_fname)
-        cllist, lnpivot, lamN, lamN_obs = load_clusters_from_file(cluster_fname, rescales)
-        real_list.append(Realization(cllist, lamN, lamN_obs))
+        cllist, lnpivot, lam_n, lam_n_obs = load_clusters_from_file(cluster_fname, rescales)
+        real_list.append(Realization(cllist, lam_n, lam_n_obs))
     return real_list
 
-# =============================================================================================================
 
-
-
-# =============================================================================================================
-# Class to hold the prior information
-# Update: 1/15/2018
-# =============================================================================================================
 class PriorContainer(object):
-    def __init__(self, cfg_in): 
-        #fname = '~/cosmosis/modules/xray-likelihood/priors/'+cfg_in['MCMC']['priorfile']
-        fname = '/home/matthewkirby/cosmosis/modules/xray-likelihood/priors/'+cfg_in['MCMC']['priorfile']
+    """Hold all of the prior information"""
+    def __init__(self, cfgin):
+        path = '/home/matthewkirby/cosmosis/modules/xray-likelihood/priors/'
+        fname = cfgin['MCMC']['priorfile']
         priorsin = cp.ConfigParser()
-        priorsin.read(fname)
+        priorsin.read(os.path.join(path + fname))
 
         self.mg0 = priorsin['MgasPriors'].getfloat('mg0')
         self.mg0_uncert = priorsin['MgasPriors'].getfloat('mg0e')
@@ -423,36 +450,58 @@ class PriorContainer(object):
              self.amp_uncert_mr_rel, self.slope_mr_rel, self.slope_uncert_mr_rel)
 
 
-# =============================================================================================================
-# Write the names of the output files
-# Update: 1/15/2018
-# =============================================================================================================
-def build_output_files(cfg_in, note):
-    simtype = cfg_in['General']['simtype']
-    prior = cfg_in['MCMC']['prior']
+def build_output_files(cfgin, note):
+    """Build the paths to the output files
+
+    Parameters
+    ----------
+    cfgin : ConfigParser
+        Configuration details for the run
+    note : int
+        Realization specific path details
+
+    Returns
+    -------
+    out_chain : str
+        Output file name for the chain
+    out_like : str
+        Output file name for the likelihood
+    """
+    simtype = cfgin['General']['simtype']
+    prior = cfgin['MCMC']['prior']
     if simtype == 'synth' or simtype == 'synth10':
-        catalog = cfg_in['General']['synth_catalog']
-        outChain = './outputs/%s/chains/mcmc%i_%sprior_richest%i.out' % (catalog, note, prior, cfg_in['SurveyInfo'].getint('nclusters'))
-        outLike = './outputs/%s/chains/lnL%i_%spriors.out' % (catalog, note, prior)
+        catalog = cfgin['General']['synth_catalog']
+        out_chain = './outputs/{}/chains/mcmc{}_{}prior_richest{}.out'.format(
+            catalog, note, prior, cfgin['SurveyInfo'].getint('nclusters'))
+        out_like = './outputs/{}/chains/lnL{}_{}priors.out'.format(catalog, note, prior)
 
     elif simtype == 'real':
-        outChain = './outputs/real_runs/chains/mcmc_%spriors.out' % (prior)
-        outLike = './outputs/real_runs/chains/lnL_%spriors.out' % (prior)
+        out_chain = './outputs/real_runs/chains/mcmc_{}priors.out'.format(prior)
+        out_like = './outputs/real_runs/chains/lnL_{}priors.out'.format(prior)
 
     else:
-        print("Simulation type %s is an invalid type." % (simtype))
+        raise TypeError("Simulation type {} is an invalid type.".format(simtype))
 
-    return outChain, outLike
+    return out_chain, out_like
 
 
+def select_pivots(cfgin, lnpivot):
+    """Select the mass pivots that will be used in the analysis
 
-# =============================================================================================================
-# Finalize the pivots that will be used
-# Updated: 1/15/2018
-# =============================================================================================================
-def select_pivots(cfg_in, lnpivot):
-    lam_pivot = cfg_in['General'].getfloat('rich_pivot')
-    mgas_pivot = cfg_in['General'].getfloat('mgas_pivot')
+    Parameters
+    ----------
+    cfgin : ConfigParser
+        Configuration details for the run
+    lnpivot : float
+        Default pivot to use
+
+    Returns
+    -------
+    pivots : array_like
+        The two pivots to use in the analysis
+    """
+    lam_pivot = cfgin['General'].getfloat('rich_pivot')
+    mgas_pivot = cfgin['General'].getfloat('mgas_pivot')
     pivots = {'rich': 0.0, 'mgas': 0.0}
 
     if abs(lam_pivot+1.) <= 0.003:
@@ -467,32 +516,27 @@ def select_pivots(cfg_in, lnpivot):
     return pivots
 
 
-# =============================================================================================================
-# Load truth from file
-# Updated: 1/31/2018
-# =============================================================================================================
 def load_truth(fname):
+    """Load the true model"""
     model = cp.ConfigParser()
     model.read(fname)
-    params = [ model['Model'].getfloat('r'),
-               model['Model'].getfloat('mgas0'),
-               model['Model'].getfloat('alphamg'),
-               model['Model'].getfloat('s0mg'),
-               model['Model'].getfloat('lam0'),
-               model['Model'].getfloat('alphalam'),
-               model['Model'].getfloat('s0lam'),
-               model['Model'].getfloat('dhmf')]
-
+    params = [model['Model'].getfloat('r'),
+              model['Model'].getfloat('mgas0'),
+              model['Model'].getfloat('alphamg'),
+              model['Model'].getfloat('s0mg'),
+              model['Model'].getfloat('lam0'),
+              model['Model'].getfloat('alphalam'),
+              model['Model'].getfloat('s0lam'),
+              model['Model'].getfloat('dhmf')]
 
     return params
 
 
-
-# =============================================================================================================
-# Find the max lamobs that is used to generate the mocks as a function of lamtrue
-# =============================================================================================================
 def find_mock_lamobs_max(simtype, addpath=''):
-    '''Load the CDFs that describe the projection model'''
+    """Find the maximum relevant observed richness as a function of true richness
+
+    This is used as the upper bound on the integrals.
+    """
     lamtrue_grid = np.loadtxt('{}projection_model/cdfs/lamtrue.dat'.format(addpath))
     lamobs_grid = np.loadtxt('{}projection_model/cdfs/lamobs.dat'.format(addpath))
     cdf_grid = np.loadtxt('{}projection_model/cdfs/cdflist.dat'.format(addpath))
@@ -501,14 +545,10 @@ def find_mock_lamobs_max(simtype, addpath=''):
     if simtype == 'real':
         return [lamtrue_grid, np.ones(len(lamtrue_grid))*1999.]
 
-    print("FINDING MAX LAMOBS FOR INTEGRATION BOUNDS. MOCK ONLY!!")
     for i in range(len(lamtrue_grid)):
         cdf = cdf_grid[i]
         idxs = np.array(np.where(cdf < 1.0)[0])
-        cdf_cut = cdf[idxs]
         lamobs_grid_cut = lamobs_grid[idxs]
         maxlamobs.append(lamobs_grid_cut[-1])
         
     return [lamtrue_grid, maxlamobs]
-
-
