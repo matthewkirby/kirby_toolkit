@@ -1,24 +1,17 @@
-import matplotlib.pyplot as plt
 import numpy as np
-from scipy.integrate import quad, trapz
+from scipy.integrate import quad
 from scipy.interpolate import interp1d
-from scipy.misc import derivative
-import math
 import configparser as cp
 from colossus.halo.mass_defs import changeMassDefinition
 from colossus.cosmology.cosmology import setCosmology
 from colossus.halo.concentration import concentration
 from scipy.special import erfc
 
-def testImport():
-    print "Imported hmf_libraries.py correctly!"
-    return
 
 # =============================================================================================================
 # Make a lookup table for M500c given M200m
 # Updated 2/2/2018
 # =============================================================================================================
-#def make_mass_conversion_lookuptable(lnmlist, sinfo, cfgin):
 def mass_conversion(lnmlist, sinfo, cfgin):
     # Set up colossus cosmology
     params = {'flat': True, 'H0': sinfo.H0, 'Om0': sinfo.OmM, 'Ob0': sinfo.Omb, 'sigma8': sinfo.sigma8, 'ns': sinfo.ns}
@@ -26,13 +19,11 @@ def mass_conversion(lnmlist, sinfo, cfgin):
 
     # Prep other stuff
     m200m_list = [np.exp(lnm) for lnm in lnmlist]
-    zHMF = cfgin['SurveyInfo'].getfloat('zhmf')
+    z_hmf = cfgin['SurveyInfo'].getfloat('zhmf')
 
-    lnm500c_list = [np.log(changeMassDefinition(m200m, concentration(m200m, '200m', zHMF), zHMF, '200m', '500c')[0]) for m200m in m200m_list]
+    lnm500c_list = [np.log(changeMassDefinition(m200m, concentration(m200m, '200m', z_hmf), z_hmf, '200m', '500c')[0]) for m200m in m200m_list]
 
-    #return lnmlist, lnm500c_list
     return lnm500c_list
-
 
 
 # =============================================================================================================
@@ -40,7 +31,7 @@ def mass_conversion(lnmlist, sinfo, cfgin):
 # Updated 3/1/2018
 # =============================================================================================================
 def load_richness_errorbar_lookuptable(addpath=''):
-    lamlist, varlist = np.loadtxt('%sinputs/p_lam_obs_z0.2.txt' % (addpath), unpack=True, skiprows=1)
+    lamlist, varlist = np.loadtxt('%sinputs/p_lam_obs_z0.2.txt' % addpath, unpack=True, skiprows=1)
     return lamlist, varlist
 
 
@@ -102,6 +93,7 @@ def calc_plamobslamtrue_on_grid(cfgin, addpath=''):
 
     return lamobs_grid, table
 
+
 def calc_proj_model(model, lamtrue):
     fprj = model['fprj'](lamtrue)
     fmsk = model['fmsk'](lamtrue)
@@ -112,7 +104,6 @@ def calc_proj_model(model, lamtrue):
     projection_model = {'fprj': fprj, 'fmsk': fmsk, 'mu': mu, 'sigma': sigma,
                         'tau': tau, 'lamtrue': lamtrue}
     return projection_model
-
 
 
 def p_lamobs_lamtrue(lamobs, model):
@@ -133,7 +124,6 @@ def p_lamobs_lamtrue(lamobs, model):
     t4 = (fmsk*fprj*0.5/lamtrue)*np.exp(-1.*tau*lamtrue)*A*erfc((mu + tau*sig2 - lamtrue 
                                                                  - lamobs)*root2siginv)
     return t1+t2+t3-t4
-
 
 
 # =============================================================================================================
@@ -194,6 +184,7 @@ class Cluster(object):
     def printout_extra(self):
         return [1.0, self.lam, self.lamE, self.mgas, self.mgasE, self.lnm200m, self.lnm500c]
 
+
 # =============================================================================================================
 # Realization Class
 # Holds all of the information of a sample of clusters
@@ -222,7 +213,7 @@ def read_hmf_files(addpath, cfg_in, generation=0, gencut=-1.):
     # Find the index of the HMF we want to work with
     zlist = np.loadtxt(path+'z.txt', skiprows=1)
     zind = np.where(abs(zlist-zHMF) < 0.00003)[0][0]
-    print "Loading HMF at redshift %f" % zlist[zind]
+    print("Loading HMF at redshift %f" % zlist[zind])
 
     # Extract the appropriate HMF
     with open(path+'dndmdz.txt', 'r') as fin:
@@ -267,32 +258,6 @@ def calcComovingVolumeMpc3(survey):
     Vs = solid_angle*quad(volumeIntegrand, survey.zMin, survey.zMax, args=(survey), epsabs=1.49e-10, epsrel=1.49e-10)[0]
     return Vs, solid_angle
 
-# =============================================================================================================
-
-
-
-# Pretty sure these next two functions aren't used anywhere. 3/1/18
-# ===========================================================
-# Integrate the HMF over mass within a bin
-#def intOverMass(mfull, hmf, binEdges):
-#    hmfi = interp1d(mfull, hmf, kind='cubic')
-#    avghmf = [quad(hmfi, binEdges[i-1], binEdges[i], epsabs=1.49e-10, epsrel=1.49e-10)[0]/(binEdges[i]-binEdges[i-1]) for i in range(1, len(binEdges))]
-#    return avghmf
-
-
-# Integrate the HMF over z for all masses
-#def intOverz(zlist, hmf, survey):
-#    avghmf = []
-#
-#    for i in range(len(hmf[0])):
-#        templist = [hmf[j][i] for j in range(len(zlist))]
-#        hmfzinterp = interp1d(zlist, templist, kind='cubic')        
-#        integrand = lambda z,survey: survey.solid_angle*volumeIntegrand(z,survey)*hmfzinterp(z)
-#
-#        avghmf.append(quad(integrand, zlist[0], zlist[-1], args=(survey), epsabs=1.49e-10, epsrel=1.49e-10)[0]/survey.Vs)
-#
-#    return avghmf
-
 
 # =============================================================================================================
 # Functions to read in the clusters based on if I am using a mock or real data
@@ -336,7 +301,7 @@ def load_clusters_from_file(fname, rescales):
     lamN, idx = min((lamN, idx) for (idx, lamN) in enumerate(lamlist))
     lamN_obs = lamElist[idx]
 
-    print '%i Clusters loaded.' % (len(cllist))
+    print('%i Clusters loaded.' % (len(cllist)))
     return cllist, lnpivot, lamN, lamN_obs
 
 
@@ -345,7 +310,7 @@ def load_synth10(catalog, note, rescales):
     real_list = []
     for kk in range(10):
         cluster_fname = './catalogs/mock/%s/richest30_%i.dat' % (catalog, note*10+k)
-        print "Read cluster", cluster_fname
+        print("Read cluster", cluster_fname)
         cllist, lnpivot, lamN, lamN_obs = load_clusters_from_file(cluster_fname, rescales)
         real_list.append(Realization(cllist, lamN, lamN_obs))
     return real_list
@@ -403,8 +368,7 @@ def build_output_files(cfg_in, note):
         outLike = './outputs/real_runs/chains/lnL_%spriors.out' % (prior)
 
     else:
-        print "Simulation type %s is an invalid type." % (simtype)
-        sys.exit(0)
+        print("Simulation type %s is an invalid type." % (simtype))
 
     return outChain, outLike
 
