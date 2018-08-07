@@ -552,3 +552,32 @@ def find_mock_lamobs_max(simtype, addpath=''):
         maxlamobs.append(lamobs_grid_cut[-1])
         
     return [lamtrue_grid, maxlamobs]
+
+
+def load_cosmology(filename):
+    """Load cosmology from a file into a dictionary
+
+    Parameters
+    ----------
+    filename : str
+        Full path and file name for the cosmology file
+
+    Returns
+    -------
+    output : dict
+        Cosmology parameters
+    """
+    cosmoin = cp.ConfigParser()
+    cosmoin.read(filename)
+    cosmology = {'name': cosmoin['Cosmology']['name'],
+                 'flat': bool(cosmoin['Cosmology']['flat']),
+                 'H0': cosmoin['Cosmology'].getfloat('h0'),
+                 'Om0': cosmoin['Cosmology'].getfloat('omm'),
+                 'Ob0': cosmoin['Cosmology'].getfloat('omb'),
+                 'sigma8': cosmoin['Cosmology'].getfloat('sigma8'),
+                 'ns': cosmoin['Cosmology'].getfloat('ns')}
+
+    return cosmology
+
+
+
