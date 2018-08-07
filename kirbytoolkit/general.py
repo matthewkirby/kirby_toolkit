@@ -200,9 +200,9 @@ class SurveyInfo(object):
         Survey area in steradians
     """
     def __init__(self, cfgin, cosmology):
-        self.area = cfgin['SurveyInfo'].getfloat('area')
-        self.zmin = cfgin['SurveyInfo'].getfloat('zlo')
-        self.zmax = cfgin['SurveyInfo'].getfloat('zhi')
+        self.area = cfgin['Survey Info'].getfloat('survey_area')
+        self.zmin = cfgin['Survey Info'].getfloat('zlo')
+        self.zmax = cfgin['Survey Info'].getfloat('zhi')
         self.cosmo = cosmology
         self.c = 300000.
         self.solid_angle = self.area*np.pi**2/(180.**2)
@@ -300,9 +300,9 @@ def read_hmf_files(addpath, cfgin, gencut=-1.):
         Use a different mass cut if I am generating a mock
     """
     log10m_cut = cfgin['General'].getfloat('log10Mcut')
-    zhmf = cfgin['SurveyInfo'].getfloat('zhmf')
-    cosmology = cfgin['Cosmology']['cosmology']
-    path = "{}inputs/generateHMF/hmf_{}_cosmology/mass_function/".format(addpath, cosmology)
+    zhmf = cfgin['Survey Info'].getfloat('zhmf')
+    cosmology = cfgin['General']['cosmology_name']
+    path = "{}inputs/hmf/hmf_{}_cosmology/mass_function/".format(addpath, cosmology)
 
     # Find the index of the HMF we want to work with
     zlist = np.loadtxt(path+'z.txt', skiprows=1)
