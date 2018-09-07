@@ -37,4 +37,4 @@ def test_comoving_volume():
     cosmology = {'flat': True, 'H0': 100, 'Om0': 0.301, 'Ob0': 0.048, 'sigma8': 0.798, 'ns': 0.973}
 
     sinfo = ktk.SurveyInfo(cfgin, cosmology)
-    np.testing.assert_allclose(sinfo.survey_volume, np.float64(567534172.), rtol=1e-6)
+    np.testing.assert_allclose(sinfo.survey_volume, np.float64(567534172.), rtol=1e-4)
