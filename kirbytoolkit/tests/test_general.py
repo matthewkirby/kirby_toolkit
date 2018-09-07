@@ -29,10 +29,10 @@ def test_mass_conversion():
 def test_comoving_volume():
     """Test the comoving volume calculation in SurveyInfo"""
     cfgin = ConfigParser()
-    cfgin.add_section('SurveyInfo')
-    cfgin.set('SurveyInfo', 'area', '10000')
-    cfgin.set('SurveyInfo', 'zlo', '0.1')
-    cfgin.set('SurveyInfo', 'zhi', '0.3')
+    cfgin.add_section('Survey Info')
+    cfgin.set('Survey Info', 'survey_area', '10000')
+    cfgin.set('Survey Info', 'zlo', '0.1')
+    cfgin.set('Survey Info', 'zhi', '0.3')
 
     cosmology = {'flat': True, 'H0': 100, 'Om0': 0.301, 'Ob0': 0.048, 'sigma8': 0.798, 'ns': 0.973}
 
